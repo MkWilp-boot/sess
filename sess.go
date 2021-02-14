@@ -1,7 +1,9 @@
 package sess
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -77,9 +79,9 @@ func (u *userSessionData) setSessionData(sessID string) bool {
 	return true
 }
 
-var chars = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
 func randSeq(n int) string {
+	var chars = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
 	b := make([]rune, n)
 	for i := range b {
 		b[i] = chars[rand.Intn(len(chars))]
@@ -87,8 +89,10 @@ func randSeq(n int) string {
 	return string(b)
 }
 
-// SetSession initialize the session
-func SetSession(ip string) bool {
+// CheckSession initialize the session
+func CheckSession(ip string) bool {
+	var sessionExp bool
+
 	db, err := sql.Open("mysql", "joaoR:Joao_846515_AX@/MSOCIAL")
 	if err != nil {
 		log.Fatal(err)
@@ -120,34 +124,66 @@ func SetSession(ip string) bool {
 		query.Scan(&sessionLoged.expired)
 
 		if sessionLoged.expired == "true" {
-			fmt.Println("Expirado")
+			sessionExp = false //Expirado
 		} else {
-			fmt.Println("Não Expirado")
+			sessionExp = true // Não expirado
 		}
 	}
-	/*stmt, err := db.Prepare(`
-			INSERT INTO http
-			(
+	return sessionExp
+}
+
+// SetSession inits user navigation
+func SetSession(ip, username, usPasswd string) error {
+	var usExists int
+
+	sha := sha256.New()
+	sha.Write([]byte(usPasswd))
+
+	hashPass := fmt.Sprintf("%x", sha.Sum(nil))
+
+	hash := randSeq(40)
+	db, err := sql.Open("mysql", "joaoR:Joao_846515_AX@/MSOCIAL")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	result, _ := db.Query(`
+		SELECT COUNT(*) AS CONTADOR FROM users
+		WHERE username = ? and user_password = ?
+	`, username, hashPass)
+	defer result.Close()
+
+	for result.Next() {
+		result.Scan(&usExists)
+	}
+
+	if usExists == 0 {
+		err = errors.New("User does not exists, check your credential and try again")
+	} else {
+		err = errors.New("")
+		// Exclui o user ja registrado no monitor de login
+		stmt, _ := db.Prepare(`
+			DELETE FROM http where cliente_id = ?
+		`)
+		stmt.Exec(ip)
+
+		stmt, err = db.Prepare(`
+			INSERT INTO http(
 				cliente_id,
 				gen_key
 			)
-			VALUES
-			(
+			VALUES(
 				?,?
 			)
 		`)
-	if err != nil {
-		log.Println(err)
-		return false
+		stmt.Exec(ip, hash)
 	}
-	stmt.Exec(ip, hash)
-	fmt.Println(hash)*/
-	return true
+	return err
 }
 
 // GetIP returns the ip of client
 func GetIP(r *http.Request) (string, error) {
-	//Get IP from the X-REAL-IP header
 	ip := r.Header.Get("X-REAL-IP")
 	netIP := net.ParseIP(ip)
 	if netIP != nil {
